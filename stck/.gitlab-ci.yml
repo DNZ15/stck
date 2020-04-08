@@ -1,0 +1,54 @@
+stages:
+  - build stack
+  - flash test boards 
+  - run tests
+variables:
+  GIT_STRATEGY: fetch
+  GIT_SUBMODULE_STRATEGY: recursive
+job 1:
+  tags: 
+  - linux
+  - arm-toolchain
+  stage: build stack
+  script: 
+  - PATH="/opt/gcc-arm-none-eabi-7-2018-q2-update/bin/:$PATH"
+  - mkdir build && cd build
+  - platform="B_L072Z_LRWAN1"
+  - cmake ../stack/ -DAPP_GATEWAY=y -DAPP_MODEM=y -DAPP_SENSOR_PUSH=y -DPLATFORM=$platform
+  - make
+  artifacts:
+   name: "$CI_COMMIT_REF_NAME"
+   when: always
+   paths:
+   - build/apps/gateway/*
+   - build/apps/modem/*
+   - build/apps/sensor_push/*
+job 2:
+  tags:
+  - JLink
+  stage: flash test boards
+  dependencies: 
+  - job 1
+  script:
+  - cd build/apps/modem
+  - JLinkExe -SelectEmuBySN 770821797 -CommandFile jlink-flash-full.script > flashOutput1.txt
+  - JLinkExe -SelectEmuBySN 772958091 -CommandFile jlink-flash-full.script > flashOutput2.txt
+  - cat flashOutput1.txt
+  - cat flashOutput2.txt
+  - if grep -q FAILED "flashOutput1.txt"; then exit 1; fi
+  - if grep -q FAILED "flashOutput2.txt"; then exit 1; fi
+job 3:
+  tags:
+  - JLink
+  stage: run tests
+  script:
+  - git clone --recurse-submodules https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.com/aloxy/oss7-testsuite.git
+  - cd oss7-testsuite
+  - pip install -r requirements.txt
+  - cd lib/pyd7a/
+  - pip install -r requirements.txt
+  - cd ../..
+  - python2 run.py --serial-test-device=/dev/ttyUSB0 --serial-dut=/dev/ttyUSB1 -m "not band433 and not band915 and not lora and not known_issue" --junitxml report.xml -v
+  artifacts:
+    reports:
+      junit: oss7-testsuite/report.xml
